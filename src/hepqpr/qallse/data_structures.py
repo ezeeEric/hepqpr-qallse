@@ -21,9 +21,9 @@ class Volayer:
     ordering = [(8, 2), (8, 4), (8, 6), (8, 8), (13, 2), (13, 4), (13, 6), (13, 8), (17, 2), (17, 4)]
     
     #: Define slices in z. Extreme values seem to be |x|=1083.4 but this is based on testing only... therefore using inf for last boundary
-    z_slices = [(-float("inf"),-800), (-800,-600), (-600,-400), (-400,-200), (-200,0), (0,200), (200,400), (400,600), (600,800), (800,float("inf"))]
+    z_slicing = [(-float("inf"),-800), (-800,-600), (-600,-400), (-400,-200), (-200,0), (0,200), (200,400), (400,600), (600,800), (800,float("inf"))]
     
-    phi_slices = [(0,0.5), (0.5,1), (1,1.5), (1.5,2)]
+    phi_slicing = [(0,0.5),(0.25,0.75),(0.5,1),(0.75,1.25),(1,1.5),(1.25,1.75),(1.5,2)]
 
     @classmethod
     def get_index(cls, volayer: Tuple[int, int]) -> int:
@@ -33,13 +33,17 @@ class Volayer:
     @classmethod
     def get_z_slice(cls, zval: float) -> int:
         """Get z-slice index for hit (see :py:attr:`~slices`)."""
-        return cls.z_slices.index(list(filter(lambda sl: zval>sl[0] and zval<=sl[1], cls.z_slices))[0])
+        return cls.z_slicing.index(list(filter(lambda sl: zval>sl[0] and zval<=sl[1], cls.z_slicing))[0])
     
     @classmethod
     def get_phi_slice(cls, xval: float, yval: float) -> int:
         """Get phi-slice index for hit (see :py:attr:`~slices`)."""
         phi=np.arctan2(yval,xval)/np.pi+1
-        return cls.phi_slices.index(list(filter(lambda sl: phi>sl[0] and phi<=sl[1], cls.phi_slices))[0])
+        #get list of all slices (tuples) fulfilling criteria "phi in slice"
+        sliceList=list(filter(lambda sl: phi>sl[0] and phi<=sl[1], cls.phi_slicing))
+        #get indices of these slices
+        indices=[cls.phi_slicing.index(sl) for sl in sliceList]
+        return indices
 
     @classmethod
     def difference(cls, volayer1, volayer2) -> int:
@@ -115,8 +119,8 @@ class Hit(Xplet):
         self.volayer: int = Volayer.get_index((int(self.volume_id), int(self.layer_id)))
         
         #: The slices
-        self.phi_slice: int = Volayer.get_phi_slice(self.x,self.y)
-        self.z_slice: int = Volayer.get_z_slice(self.z)
+        self.phi_slices: list = Volayer.get_phi_slice(self.x,self.y)
+        self.z_slices: int = Volayer.get_z_slice(self.z)
         
         #: The coordinates in the X-Y plane, i.e. `(x,y)`
         self.coord_2d: Tuple[float, float] = np.array([self.x, self.y])
@@ -157,7 +161,9 @@ class Doublet(Xplet):
         self.coord_2d = hit_end.coord_2d - hit_start.coord_2d
         #: The 3D vector of this doublet, i.e. `(∆x,∆y,∆z)`
         self.coord_3d = hit_end.coord_3d - hit_start.coord_3d
-
+            
+        #: union of slices the hits in this doublet belong to
+        self.phi_slices = set(self.h1.phi_slices+self.h2.phi_slices)
 
 class Triplet(Xplet):
     """A triplet is composed of two doublets, where the first ends at the start of the other."""
@@ -182,6 +188,9 @@ class Triplet(Xplet):
         self.drz_sign = 1 if abs(d1.rz_angle + self.drz - d2.rz_angle) < 1e-3 else -1
         #: QUBO weight, assigned later
         self.weight = .0
+        
+        #: union of slices the doublets in this triplet belong to
+        self.phi_slices = self.d1.phi_slices.union(self.d2.phi_slices)
 
     def doublets(self) -> List[Doublet]:
         """Return the ordered list of doublets composing this triplet."""
@@ -210,6 +219,9 @@ class Quadruplet(Xplet):
         #: QUBO coupling strength between the two triplets. Should be negative to encourage
         #: the two triplets to be kept together.
         self.strength = .0
+        
+        #: union of slices the triplets in this quadruplet belong to
+        self.phi_slices = self.t1.phi_slices.union(self.t2.phi_slices)
 
     def doublets(self) -> List[Doublet]:
         """Return the ordered list of doublets composing this triplet."""
